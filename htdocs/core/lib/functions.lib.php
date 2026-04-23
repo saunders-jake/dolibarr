@@ -12345,6 +12345,11 @@ function dol_eval_standard($s, $hideerrors = 1, $onlysimplestring = '1')
 			return 'Bad string syntax to evaluate (mode ' . $onlysimplestring . ', found a < or <= without space after): ' . $s;
 		}
 
+		// Check for variable interpolation inside double-quoted strings (e.g. "$var" could be used to build function names)
+		if (preg_match('/"[^"]*\$[a-zA-Z_][^"]*"/', $s)) {
+			return 'Bad string syntax to evaluate (mode ' . $onlysimplestring . ', found a variable inside a double-quoted string, use single quotes or concatenation instead): ' . $s;
+		}
+
 		// Check if there is dynamic call (first we use black list patterns)
 		if (preg_match('/\$[\w]*\s*\(/', $s)) {
 			return 'Bad string syntax to evaluate (mode ' . $onlysimplestring . ', found a call using "$abc(" or "$abc (" instead of using the direct name of the function): ' . $s;
@@ -12412,7 +12417,7 @@ function dol_eval_standard($s, $hideerrors = 1, $onlysimplestring = '1')
 			$scheck = preg_replace('/\$website/', '__VARWEBSITE__', $scheck);
 			$scheck = preg_replace('/\$objectoffield/', '__VAROBJECTOFFIELD__', $scheck);
 			$scheck = preg_replace('/\$object/', '__VAROBJECT__', $scheck);
-			$scheck = preg_replace('/\$var/', '__VARVAR__', $scheck);
+			$scheck = preg_replace('/\$var\d*\b/', '__VARVAR__', $scheck);
 
 			// deprecated (now we use $objecf->canvas or $objectoffield->canvas)
 			$scheck = preg_replace('/\$soc->canvas/', '__VARSOCCANVAS__', $scheck);
@@ -12501,19 +12506,41 @@ function dol_eval_standard($s, $hideerrors = 1, $onlysimplestring = '1')
 		}
 
 		if (!empty($dolibarr_main_restrict_eval_methods)) {
-			// Accept only white-listed allowed function and classes
-			// TODO Get all pattern '/([\s\w]+)\(/', then check that $reg[1] is a defined class or a function into a given list
-			$pattern = '/([\s\w\'\]\"]+)\(/';
+			// Accept only white-listed allowed functions, methods and classes
+			// Separate method whitelist (only these can be called via ->method())
+			$allowed_methods = array('fetchNoCompute', 'hasRight', 'isAdmin', 'isExternalUser');
+
+			// Validate ->method( calls against method-specific whitelist
+			$method_matches = array();
+			preg_match_all('/->(\w+)\s*\(/', $s, $method_matches);
+			if (!empty($method_matches[1])) {
+				foreach ($method_matches[1] as $method_name) {
+					if (!in_array($method_name, $allowed_methods)) {
+						dol_syslog('Bad string syntax to evaluate: ' . $s, LOG_WARNING);
+						return 'Bad string syntax to evaluate. Method "'.$method_name.'" is not in the whitelist of allowed methods ('.implode(', ', $allowed_methods).'): ' . $s;
+					}
+				}
+			}
+
+			// Validate standalone function calls and new Class() against function whitelist
+			// Use a pattern that captures optional -> prefix to distinguish method calls from function calls
+			$pattern = '/(?:(->)\s*)?([\s\w\'\]\"]+)\(/';
 
 			$matches = array();
 			preg_match_all($pattern, $s, $matches);
 
 			if (count($matches)) {
-				foreach ($matches[1] as $m) {
+				foreach ($matches[2] as $key => $m) {
 					$m = trim($m);
 					if (empty($m)) {
 						continue;
 					}
+
+					// Skip method calls that were already validated by the method whitelist above
+					if (!empty($matches[1][$key])) {
+						continue;
+					}
+
 					$reg = array();
 					if (!preg_match('/new ([A-Z][\w]+)/i', $m, $reg)) {
 						if (!in_array($m, $dolibarr_main_restrict_eval_methods_array)) {
