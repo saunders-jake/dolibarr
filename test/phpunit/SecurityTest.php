@@ -915,6 +915,53 @@ class SecurityTest extends CommonClassTest
 			$result = (string) dol_eval('$$a', 1, 0);
 			print "result25 = ".$result."\n";
 			$this->assertStringContainsString('Bad string syntax to evaluate', json_encode($result), 'Test 25 - The string was not detected as evil - Can\'t find the string Bad string syntax when i should');
+
+
+			// Security hardening tests
+
+			// Test that $var prefix only matches $var + digits, not arbitrary $variable, $varExec, etc.
+			if (!empty($dolibarr_main_restrict_eval_methods)) {
+				$s = '($varExec = "test")';
+				$result = (string) dol_eval($s, 1, 1, '2');
+				print "result26 = ".$result."\n";
+				$this->assertStringContainsString('Bad string syntax to evaluate', $result, 'Test 26 - $varExec should be rejected as an unauthorized variable name');
+
+				$s = '($variable = "test")';
+				$result = (string) dol_eval($s, 1, 1, '2');
+				print "result27 = ".$result."\n";
+				$this->assertStringContainsString('Bad string syntax to evaluate', $result, 'Test 27 - $variable should be rejected as an unauthorized variable name');
+
+				// $var1 and $var2 should still work
+				$s = '($var1 = "test") ? "yes" : "no"';
+				$result = (string) dol_eval($s, 1, 1, '2');
+				print "result28 = ".$result."\n";
+				$this->assertEquals('yes', $result, 'Test 28 - $var1 should be allowed');
+			}
+
+			// Test that variable interpolation in double-quoted strings is blocked
+			$s = '($cmd = "$mainmenu")';
+			$result = (string) dol_eval($s, 1, 1, '1');
+			print "result29 = ".$result."\n";
+			$this->assertStringContainsString('Bad string syntax to evaluate', $result, 'Test 29 - Variable interpolation in double-quoted strings should be blocked');
+
+			// Test that regular double-quoted strings without variables still work
+			$result = dol_eval('getDolGlobalString("MAIN_FEATURES_LEVEL")', 1, 1, '1');
+			print "result30 = ".$result."\n";
+			// Should not return a "Bad string" error
+			$this->assertStringNotContainsString('Bad string syntax to evaluate', (string) $result, 'Test 30 - getDolGlobalString with double-quoted literal should be allowed');
+
+			// Test that ->method() calls are validated against method whitelist (whitelist mode only)
+			if (!empty($dolibarr_main_restrict_eval_methods)) {
+				$s = '$object->dangerousMethod()';
+				$result = (string) dol_eval($s, 1, 1, '1');
+				print "result31 = ".$result."\n";
+				$this->assertStringContainsString('Bad string syntax to evaluate', $result, 'Test 31 - Non-whitelisted method call should be rejected');
+
+				$s = '$user->hasRight("user", "read")';
+				$result = (string) dol_eval($s, 1, 1, '1');
+				print "result32 = ".$result."\n";
+				$this->assertStringNotContainsString('Bad string syntax to evaluate', (string) $result, 'Test 32 - hasRight() is a whitelisted method and should be allowed');
+			}
 		}
 	}
 
